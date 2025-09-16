@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="bg">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Калкулатор храна</title>
+<style>
+  body{font-family:Segoe UI, Tahoma, Arial; max-width:960px;margin:20px auto;padding:0 14px;color:#111}
+  h1{font-size:22px;text-align:center}
+  label{display:block;margin-top:12px;font-weight:600}
+  input[type="text"],input[type="date"],input[type="number"]{width:100%;padding:10px;border:1px solid #ccc;border-radius:6px;box-sizing:border-box;font-size:15px}
+  .row{display:flex;gap:14px;flex-wrap:wrap}
+  .col{flex:1;min-width:240px}
+  button{margin-top:14px;padding:12px 16px;border-radius:8px;border:0;background:#1976d2;color:#fff;cursor:pointer;font-size:15px}
+  button.xlsx{background:#ff9800}
+  table{width:100%;border-collapse:collapse;margin-top:18px;font-size:14px}
+  th,td{border:1px solid #ddd;padding:8px;text-align:center}
+  th{background:#f3f3f3;font-weight:600}
+  .muted{color:#666;font-size:13px;margin-top:10px}
+  .danger{color:#b00020}
+  .info-icon{display:inline-block;margin-left:6px;width:16px;height:16px;line-height:16px;text-align:center;border-radius:50%;background:#1976d2;color:#fff;font-size:12px;cursor:default;position:relative}
+  .info-icon:hover::after{
+    content:"ВЗИМА СЕ ОТ ТАБЛИЦАТА ЗА СЪОТВЕТНАТА ХРАНА СПРЯМО ТЕМПЕРАТУРАТА НА ВОДАТА!";
+    position:absolute;top:22px;left:0;white-space:normal;width:260px;
+    background:#333;color:#fff;padding:6px 8px;border-radius:6px;font-size:12px;z-index:10
+  }
+  @media(max-width:600px){
+    h1{font-size:18px}
+    button{width:100%}
+    table{font-size:12px}
+  }
+</style>
+</head>
+<body>
+  <h1>Калкулатор на дневно количество храна и крайни килограми</h1>
+
+  <label>Начална дата (H2)
+    <input id="startDate" type="date" />
+  </label>
+
+  <label>Крайна дата (I2)
+    <input id="endDate" type="date" />
+  </label>
+
+  <div class="row">
+    <div class="col">
+      <label>Начално средно тегло D2 (kg)
+        <input id="D2" type="number" step="any" />
+      </label>
+    </div>
+    <div class="col">
+      <label>Брой (бр.)
+        <input id="count" type="number" step="1" min="1" />
+      </label>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col">
+      <label>Количество храна за 100 кг биомаса 
+        <span class="info-icon">i</span>
+        <input id="foodPer100" type="number" step="any" />
+      </label>
+    </div>
+    <div class="col">
+      <label>Коефициент на нарастване
+        <input id="growthCoef" type="number" step="any" value="1.55" />
+      </label>
+    </div>
+  </div>
+
+  <div class="row">
+    <button id="calcBtn">Изчисли</button>
+    <button id="downloadXlsx" class="xlsx">Експортирай Excel (.xlsx)</button>
+  </div>
+
+  <div id="message" class="muted"></div>
+
+  <table id="resultTable" style="display:none">
+    <thead>
+      <tr>
+        <th>Дата</th>
+        <th>Средно тегло (kg)</th>
+        <th>Биомаса (kg)</th>
+        <th>Количество храна за ден (kg)</th>
+        <th>Крайни килограми (kg)</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+<script>
+(function(){
+  const startEl = document.getElementById('startDate');
+  const endEl = document.getElementById('endDate');
+  const d2El = document.getElementById('D2');
+  const countEl = document.getElementById('count');
+  const foodPer100El = document.getElementById('foodPer100');
+  const growthCoefEl = document.getElementById('growthCoef');
+  const calcBtn = document.getElementById('calcBtn');
+  const downloadXlsxBtn = document.getElementById('downloadXlsx');
+  const resultTable = document.getElementById('resultTable');
+  const tbody = resultTable.querySelector('tbody');
+  const msg = document.getElementById('message');
+
+  function fmtDate(d){
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    const day = String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${day}`;
+  }
+  function parseDateInput(el){
+    if(!el.value) return null;
+    const parts = el.value.split('-');
+    return new Date(parseInt(parts[0]), parseInt(parts[1])-1, parseInt(parts[2]));
+  }
+  function daysBetween(a,b){ return Math.round((b - a)/(24*60*60*1000)); }
+
+  calcBtn.addEventListener('click', function(){
+    msg.textContent = '';
+    tbody.innerHTML = '';
+    resultTable.style.display = 'none';
+
+    const start = parseDateInput(startEl);
+    const end = parseDateInput(endEl);
+    if(!start || !end || end < start){ msg.innerHTML = '<span class="danger">Моля въведи валидни дати.</span>'; return; }
+
+    const d2 = parseFloat(d2El.value);
+    const count = parseInt(countEl.value,10);
+    const foodPer100 = parseFloat(foodPer100El.value);
+    const growthCoef = parseFloat(growthCoefEl.value);
+    if(isNaN(d2)||isNaN(count)||isNaN(foodPer100)||isNaN(growthCoef)){
+      msg.innerHTML = '<span class="danger">Невалидни стойности в полетата.</span>'; return;
+    }
+
+    const totalDays = daysBetween(start,end)+1;
+    let avgWeight = d2;
+
+    for(let i=0;i<totalDays;i++){
+      const curDate = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+      const biomass = avgWeight * count;
+      const dailyFood = (foodPer100/100) * biomass;
+      const finalKg = biomass + (dailyFood / growthCoef);
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${fmtDate(curDate)}</td>
+        <td>${avgWeight.toFixed(4)}</td>
+        <td>${biomass.toFixed(4)}</td>
+        <td>${dailyFood.toFixed(4)}</td>
+        <td>${finalKg.toFixed(4)}</td>`;
+      tbody.appendChild(tr);
+
+      avgWeight = finalKg / count;
+    }
+
+    resultTable.style.display = '';
+    msg.textContent = 'Готово — ' + totalDays + ' реда.';
+  });
+
+  // XLSX Export (без промени)
+  downloadXlsxBtn.addEventListener('click', function(){
+    if(tbody.children.length === 0){ msg.innerHTML = '<span class="danger">Няма резултати за експортиране.</span>'; return; }
+    const wb = XLSX.utils.book_new();
+    const ws_data = [];
+    const headers = ['Дата','Средно тегло (kg)','Биомаса (kg)','Количество храна за ден (kg)','Крайни килограми (kg)'];
+    ws_data.push(headers);
+    for(const tr of tbody.children){
+      const cols = Array.from(tr.children).map(td => td.textContent);
+      ws_data.push(cols);
+    }
+    const ws = XLSX.utils.aoa_to_sheet(ws_data);
+    XLSX.utils.book_append_sheet(wb, ws, "Резултати");
+    const now = new Date();
+    XLSX.writeFile(wb, 'hrana_results_' + now.toISOString().slice(0,10) + '.xlsx');
+  });
+
+})();
+</script>
+</body>
+</html>
